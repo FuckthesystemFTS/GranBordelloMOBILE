@@ -1,0 +1,52 @@
+name: Publish verified signed APK 3.0.0
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-android-300
+  cancel-in-progress: false
+jobs:
+  reconstruct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Reconstruct byte-exact signed APK from public release data
+        env:
+          DELTA_SHA: fc14ae4e024f012311dc182773c48fcd115fb8138a8de6d0f0aa1ff6f9b17bca
+          TARGET_SHA: a1c166851c2a7f19b58f59b0ee45dc605dfc1776d8124f98366d1a427dc9b4d6
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,zipfile
+          def sha(path):
+              with open(path,'rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
+          def download(url,path):
+              subprocess.run(['curl','--fail','--silent','--show-error','--location','--retry','3','--connect-timeout','20','--max-time','1200',url,'-o',path],check=True)
+          download('https://github.com/FuckthesystemFTS/GranBordelloMOBILE/releases/download/v3.0.0/GranBordelloMOBILE-3.0.0-publication-delta.zip','delta.zip')
+          assert sha('delta.zip')==os.environ['DELTA_SHA']
+          with zipfile.ZipFile('delta.zip') as z:
+              metadata=json.loads(z.read('segments.json'))
+              with z.open('literals.bin') as source,open('literals.bin','wb') as dest:
+                  import shutil;shutil.copyfileobj(source,dest)
+          assert metadata['newSha256']==os.environ['TARGET_SHA']
+          assert metadata['oldUrl']=='https://github.com/FuckthesystemFTS/GranBordelloMOBILE/releases/download/v2.9.2/GranBordelloMOBILE-2.9.2.apk'
+          download(metadata['oldUrl'],'previous.apk')
+          assert sha('previous.apk')==metadata['oldSha256']
+          result='GranBordelloMOBILE-3.0.0.apk'
+          with open('previous.apk','rb') as previous,open('literals.bin','rb') as literal,open(result,'wb') as out:
+              for segment in metadata['segments']:
+                  assert segment['source'] in ('old','new')
+                  source=previous if segment['source']=='old' else literal
+                  start,length=segment['start'],segment['length']
+                  assert start>=0 and length>0 and start+length<=os.fstat(source.fileno()).st_size
+                  source.seek(start)
+                  while length:
+                      block=source.read(min(length,1048576));assert block;out.write(block);length-=len(block)
+          assert pathlib.Path(result).stat().st_size==metadata['bytes']
+          assert sha(result)==os.environ['TARGET_SHA']
+          print('PASS signed APK reconstructed with original SHA-256:',os.environ['TARGET_SHA'])
+          PY
+      - name: Publish original signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v3.0.0 GranBordelloMOBILE-3.0.0.apk --repo FuckthesystemFTS/GranBordelloMOBILE --clobber
