@@ -13,8 +13,8 @@ jobs:
     steps:
       - name: Reconstruct byte-exact signed APK from public release data
         env:
-          DELTA_SHA: a5d9c2f2c0ddfe5f106fb08adba0549671f743faedb01d9b09cc37651e3a15ee
-          TARGET_SHA: 4d5c2f53499dfc8f67ebab6756679082cbde669bcb23d0d205ab919f08e23b60
+          DELTA_SHA: 93617c590fe4118a967b16f8f7287b7cee15eb06ec989dbb7ce702d01d2398ae
+          TARGET_SHA: caca47ec8a31fcad535aae64bdd65583fd461e1876d927246b0918556a3e7366
         run: |
           python3 - <<'PY'
           import hashlib,json,os,pathlib,subprocess,zipfile
