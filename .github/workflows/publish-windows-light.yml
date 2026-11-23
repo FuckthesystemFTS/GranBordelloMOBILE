@@ -1,0 +1,45 @@
+name: Publish verified Windows LIGHT base
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: windows-light-transfer
+  cancel-in-progress: false
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Transfer only integrity-checked public package parts
+        env:
+          SOURCE: ${{ inputs.source }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os,json,pathlib,hashlib,subprocess,concurrent.futures
+          repo='FuckthesystemFTS/GranBordelloMOBILE';tag='v3.0.4-light';source=os.environ['SOURCE']
+          subprocess.run(['curl','-fLsS','--retry','5',source+'/metadata','-o','metadata.json'],check=True)
+          raw=pathlib.Path('metadata.json').read_bytes();assert hashlib.sha256(raw).hexdigest()=='b8dfe8fa13d72eb12084683ddd99c6c4abf7b7b99a5371c5604e11d7da73dbe3'
+          meta=json.loads(raw);assert meta['version']=='3.0.4'
+          release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{tag}']))
+          assets={a['name']:a for a in release['assets']}
+          def part(p):
+              old=assets.get(p['name'])
+              if old and old['size']==p['bytes'] and old['digest']=='sha256:'+p['sha256']:return
+              file=pathlib.Path(p['name'])
+              subprocess.run(['curl','-fLsS','--retry','8','--retry-all-errors','--connect-timeout','20','--max-time','3600','--continue-at','-',source+'/'+p['name'],'-o',str(file)],check=True)
+              with file.open('rb') as f:assert hashlib.file_digest(f,'sha256').hexdigest()==p['sha256']
+              assert file.stat().st_size==p['bytes']
+              subprocess.run(['gh','release','upload',tag,str(file),'--repo',repo,'--clobber'],check=True)
+              file.unlink();print('Verified and published',p['name'],flush=True)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:list(pool.map(part,meta['parts']))
+          release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{tag}']));assets={a['name']:a for a in release['assets']}
+          for p in meta['parts']:
+              a=assets[p['name']];assert a['size']==p['bytes']and a['digest']=='sha256:'+p['sha256']
+          print('PASS all public LIGHT parts verified',len(meta['parts']))
+          PY
