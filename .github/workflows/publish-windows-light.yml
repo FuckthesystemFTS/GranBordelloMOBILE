@@ -13,7 +13,7 @@ concurrency:
 jobs:
   transfer:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - name: Transfer only integrity-checked public package parts
         env:
@@ -37,7 +37,7 @@ jobs:
               assert file.stat().st_size==p['bytes']
               subprocess.run(['gh','release','upload',tag,str(file),'--repo',repo,'--clobber'],check=True)
               file.unlink();print('Verified and published',p['name'],flush=True)
-          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:list(pool.map(part,meta['parts']))
+          with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:list(pool.map(part,meta['parts']))
           release=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/releases/tags/{tag}']));assets={a['name']:a for a in release['assets']}
           for p in meta['parts']:
               a=assets[p['name']];assert a['size']==p['bytes']and a['digest']=='sha256:'+p['sha256']
