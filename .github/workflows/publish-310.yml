@@ -1,0 +1,57 @@
+name: Publish Gran Bordello 3.0.10 verified packages
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-310
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Reconstruct exact signed packages and verify every hash
+        env:
+          INPUTS: '{"apks":[{"url":"https://granbordello.it/downloads/GranBordelloMOBILE-3.0.10-publication-delta.zip","sha256":"0d3e5c968595397af8c05a15cefb7db68a6f0be07eca01ed15bdd24616b6ebc7","target":"03457b92e4026c2ff934e9ef4f7fc0418753eb8afbde76c6b662d85724c0822c","name":"GranBordelloMOBILE-3.0.10.apk"},{"url":"https://granbordello.it/downloads/GranBordelloMOBILE-OldDevice-3.0.10-publication-delta.zip","sha256":"c383dae5a243e49b44187fa4e33f268382f4afd6ad606fb6b2aadd07e3517b7d","target":"d2b78e33565de1b735e2b4b38d78fed98b097def2169aedf370c34c4cc76da4a","name":"GranBordelloMOBILE-OldDevice-3.0.10.apk"}],"windows":{"version":"3.0.10","url":"https://github.com/FuckthesystemFTS/GranBordelloMOBILE/releases/download/v3.0.10/Patch-PS2-GT3-v3.0.10-los-bordellos-online.exe","bytes":154980708,"sha256":"58e62d9dac8e2d5939097c8f1df7f43f3878cea851e0170ffbec923cd35e377a"},"parts":[{"url":"https://granbordello.it/downloads/Windows-relay-3.0.10-0.bin","name":"Windows-relay-3.0.10-0.bin","bytes":67108864,"sha256":"cd22ee2d54005de07e1b372182015b87cf5e6c33258841283a97782d933b9847"},{"url":"https://granbordello.it/downloads/Windows-relay-3.0.10-1.bin","name":"Windows-relay-3.0.10-1.bin","bytes":67108864,"sha256":"384f80b18a3b16af4778ebb4eb8a7b18da776d8475792de9b01f954633df0702"},{"url":"https://granbordello.it/downloads/Windows-relay-3.0.10-2.bin","name":"Windows-relay-3.0.10-2.bin","bytes":20762980,"sha256":"e3db0abfb222f6c0cc544a245a72b921753d122d620360548650dbbe957936dc"}]}'
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,zipfile,shutil,concurrent.futures
+          cfg=json.loads(os.environ['INPUTS'])
+          def sha(path):
+              with open(path,'rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
+          def download(url,path):
+              subprocess.run(['curl','-fLsS','--retry','4','--connect-timeout','20','--max-time','1200',url,'-o',path],check=True)
+          for apk in cfg['apks']:
+              download(apk['url'],'delta.zip');assert sha('delta.zip')==apk['sha256']
+              with zipfile.ZipFile('delta.zip')as z:
+                  m=json.loads(z.read('segments.json'))
+                  with z.open('literals.bin')as source,open('literals.bin','wb')as dest:shutil.copyfileobj(source,dest)
+              assert m['newSha256']==apk['target']
+              assert m['oldUrl'].startswith('https://github.com/FuckthesystemFTS/GranBordelloMOBILE/releases/download/v3.0.9')
+              download(m['oldUrl'],'previous.apk');assert sha('previous.apk')==m['oldSha256']
+              with open('previous.apk','rb')as previous,open('literals.bin','rb')as literal,open(apk['name'],'wb')as dest:
+                  for s in m['segments']:
+                      assert s['source']in('old','new')
+                      source=previous if s['source']=='old'else literal
+                      start,left=s['start'],s['length'];assert start>=0 and left>0 and start+left<=os.fstat(source.fileno()).st_size
+                      source.seek(start)
+                      while left:
+                          data=source.read(min(left,1048576));assert data;dest.write(data);left-=len(data)
+              assert pathlib.Path(apk['name']).stat().st_size==m['bytes'] and sha(apk['name'])==apk['target']
+              pathlib.Path('previous.apk').unlink();pathlib.Path('literals.bin').unlink();pathlib.Path('delta.zip').unlink()
+              print('PASS signed APK:',apk['name'])
+          def part(p):
+              download(p['url'],p['name']);assert pathlib.Path(p['name']).stat().st_size==p['bytes'] and sha(p['name'])==p['sha256']
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3)as pool:list(pool.map(part,cfg['parts']))
+          result='Patch-PS2-GT3-v3.0.10-los-bordellos-online.exe'
+          with open(result,'wb')as dest:
+              for p in cfg['parts']:
+                  with open(p['name'],'rb')as source:shutil.copyfileobj(source,dest)
+          assert sha(result)==cfg['windows']['sha256']
+          print('PASS Windows installer')
+          PY
+      - name: Publish signed Windows, Android and Old Device packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v3.0.10 GranBordelloMOBILE-3.0.10.apk GranBordelloMOBILE-OldDevice-3.0.10.apk Patch-PS2-GT3-v3.0.10-los-bordellos-online.exe --repo FuckthesystemFTS/GranBordelloMOBILE --clobber
